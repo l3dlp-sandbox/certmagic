@@ -1161,6 +1161,8 @@ func (cfg *Config) TLSConfig() *tls.Config {
 	}
 }
 
+var errNoACMEChallengeInfo = errors.New("no active ACME challenge")
+
 // getACMEChallengeInfo loads the challenge info from either the internal challenge memory
 // or the external storage (implying distributed solving). The second return value
 // indicates whether challenge info was loaded from external storage. If true, the
@@ -1188,6 +1190,7 @@ func (cfg *Config) getACMEChallengeInfo(ctx context.Context, identifier string, 
 	var chalInfo acme.Challenge
 	var chalInfoBytes []byte
 	var tokenKey string
+	var challengeFound bool
 	for _, issuer := range cfg.Issuers {
 		ds := distributedSolver{
 			storage:                cfg.Storage,
@@ -1197,15 +1200,19 @@ func (cfg *Config) getACMEChallengeInfo(ctx context.Context, identifier string, 
 		var err error
 		chalInfoBytes, err = cfg.Storage.Load(ctx, tokenKey)
 		if err == nil {
+			challengeFound = true
 			break
 		}
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		return Challenge{}, false, fmt.Errorf("opening distributed challenge token file %s: %v", tokenKey, err)
+		return Challenge{}, false, fmt.Errorf("opening distributed challenge token file %s: %w", tokenKey, err)
+	}
+	if !challengeFound {
+		return Challenge{}, false, fmt.Errorf("%w: no information found to solve challenge for identifier: %s", errNoACMEChallengeInfo, identifier)
 	}
 	if len(chalInfoBytes) == 0 {
-		return Challenge{}, false, fmt.Errorf("no information found to solve challenge for identifier: %s", identifier)
+		return Challenge{}, false, fmt.Errorf("decoding challenge token file %s: empty data", tokenKey)
 	}
 
 	err := json.Unmarshal(chalInfoBytes, &chalInfo)
